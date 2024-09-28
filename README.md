@@ -16,7 +16,7 @@ Este repositorio contiene un script en Python para consultar el padrón de AFIP 
 ## Uso
 
 - Prepara un archivo Excel con la lista de CUITs que deseas verificar. Asegúrate de que la columna que contiene los CUITs se llame "CUIT".
-- Descarga el archivo de texto del padrón de AFIP desde el siguiente enlace: Padrón de AFIP.
+- Descarga el archivo de texto del padrón de AFIP desde el sitio de AFIP.
 - Consulta el diseño de registro y observaciones en la misma página.
 - Ejecuta el script.
 
