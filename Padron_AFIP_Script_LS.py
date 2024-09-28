@@ -58,7 +58,7 @@ def main():
     output_file = filedialog.asksaveasfilename(defaultextension=".xlsx", 
                                                initialfile="Reporte_AFIP_Padron.xlsx")
 
-    # Crear un ExcelWriter object
+    # Ordenar el reporte según coincidentes / no coincidentes
     with pd.ExcelWriter(output_file) as writer:
         df_encontrados.to_excel(writer, sheet_name='Encontrados', index=False)
         df_no_encontrados.to_excel(writer, sheet_name='No Encontrados', index=False)
