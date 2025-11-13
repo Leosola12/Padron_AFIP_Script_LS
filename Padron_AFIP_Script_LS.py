@@ -1,11 +1,10 @@
 import pandas as pd
 import tkinter as tk
-from tkinter import filedialog
-from tkinter.messagebox import showinfo
+from tkinter import filedialog, messagebox
 from time import time
 
 def seleccionar_archivo(mensaje):
-    showinfo("Selección de archivo", mensaje)
+    messagebox.showinfo("Selección de archivo", mensaje)
     return filedialog.askopenfilename()
 
 def procesar_linea(linea):
@@ -39,14 +38,15 @@ def main():
     registros_encontrados = []
     cuits_encontrados = set()
     try:
-        with open(txt_file, 'r', encoding='ISO-8859-1') as file:  # Cambiar a ISO-8859-1
+        with open(txt_file, 'r', encoding='ISO-8859-1') as file:
             for linea in file:
                 registro = procesar_linea(linea)
                 if registro['CUIT'] in cuits_a_buscar:
                     registros_encontrados.append(registro)
                     cuits_encontrados.add(registro['CUIT'])
     except UnicodeDecodeError:
-        showinfo("Error", "No se pudo leer el archivo con la codificación especificada. Intenta con otra codificación.")
+        messagebox.showinfo("Error", "No se pudo leer el archivo con la codificación especificada. Intenta con otra codificación.")
+        return
 
     # Crear DataFrame con los registros encontrados
     df_encontrados = pd.DataFrame(registros_encontrados)
@@ -54,18 +54,31 @@ def main():
     # Filtrar CUITs no encontrados
     df_no_encontrados = df_excel[~df_excel['CUIT'].isin(cuits_encontrados)]
 
-    # Seleccionar dónde guardar el archivo de reporte
-    output_file = filedialog.asksaveasfilename(defaultextension=".xlsx", 
-                                               initialfile="Reporte_AFIP_Padron.xlsx")
+    # Generar reporte de coincidencias
+    resumen = {
+        "Total CUITs Excel": [len(df_excel)],
+        "Coincidencias encontradas": [len(df_encontrados)],
+        "No encontradas": [len(df_no_encontrados)],
+        "Porcentaje de coincidencia (%)": [round(len(df_encontrados) / len(df_excel) * 100, 2)]
+    }
+    df_resumen = pd.DataFrame(resumen)
 
-    # Ordenar el reporte según coincidentes / no coincidentes
+    # Guardar el archivo Excel final
+    output_file = filedialog.asksaveasfilename(
+        defaultextension=".xlsx", 
+        initialfile="Reporte_AFIP_Padron.xlsx",
+        title="Guardar reporte como..."
+    )
+
     with pd.ExcelWriter(output_file) as writer:
+        df_resumen.to_excel(writer, sheet_name='Resumen', index=False)
         df_encontrados.to_excel(writer, sheet_name='Encontrados', index=False)
         df_no_encontrados.to_excel(writer, sheet_name='No Encontrados', index=False)
 
     end = time()
-    showinfo("Proceso completado", 
-             f"El proceso ha finalizado en {round(end - start, 2)} segundos.")
+    messagebox.showinfo("Proceso completado", 
+                        f"El proceso ha finalizado en {round(end - start, 2)} segundos.\n"
+                        f"Archivo guardado en:\n{output_file}")
 
 if __name__ == "__main__":
     main()
