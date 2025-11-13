@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>Padrón AFIP - Viewer & Export (HTML)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; padding: 20px; max-width: 900px; margin: auto; color:#0f172a; }
+    h1 { font-size: 20px; margin-bottom: 6px; }
+    p.lead { margin-top: 0; color:#475569; }
+    .card { border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin-bottom: 12px; background: #fff; box-shadow: 0 1px 3px rgba(2,6,23,0.04); }
+    label { display:block; margin-bottom:8px; font-weight:600; }
+    input[type=file] { display:block; margin-bottom:10px; }
+    button { background:#0ea5a4; color:white; border:none; padding:10px 14px; border-radius:6px; cursor:pointer; font-weight:600; }
+    button:disabled { opacity:0.5; cursor:not-allowed; }
+    pre { background:#0f172a; color:#e2e8f0; padding:10px; border-radius:6px; overflow:auto; max-height:260px; }
+    .small { font-size:13px; color:#475569; }
+    .warn { color:#b45309; font-weight:700; }
+    table { border-collapse: collapse; width:100%; margin-top:8px; font-size:13px; }
+    th, td { border:1px solid #e6eef6; padding:6px 8px; text-align:left; }
+  </style>
+  <!-- SheetJS (xlsx) CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+  <h1>Padrón AFIP — Viewer y Export (HTML)</h1>
+  <p class="lead">Subí tu Excel con CUITs y el archivo .txt del padrón AFIP. El navegador procesará todo y te permitirá descargar un Excel con 3 hojas: <strong>Encontrados</strong>, <strong>No Encontrados</strong>, <strong>Resumen</strong>.</p>
+
+  <div class="card">
+    <label for="excelFile">1) Archivo Excel (.xlsx) con la columna <code>CUIT</code></label>
+    <input id="excelFile" type="file" accept=".xls,.xlsx" />
+    <div class="small">Asegurate que la columna que contiene los CUITs se llame exactamente <code>CUIT</code>. Pueden tener puntos/guiones; el script los limpia.</div>
+  </div>
+
+  <div class="card">
+    <label for="txtFile">2) Archivo de texto del padrón AFIP (.txt)</label>
+    <input id="txtFile" type="file" accept=".txt" />
+    <div class="small">El archivo de AFIP es usualmente de ancho fijo. El script lee con codificación ISO-8859-1.</div>
+  </div>
+
+  <div class="card">
+    <label>3) Opciones</label>
+    <div style="display:flex; gap:8px; align-items:center; margin-bottom:10px;">
+      <button id="runBtn">Procesar y descargar Excel</button>
+      <button id="previewBtn">Mostrar vista previa (primeros 10 encontrados)</button>
+    </div>
+    <div id="status" class="small"></div>
+    <div id="warning" class="small warn"></div>
+  </div>
+
+  <div id="previewArea" class="card" style="display:none;">
+    <h3>Vista previa (primeros 10 encontrados)</h3>
+    <div id="previewTable"></div>
+  </div>
+
+  <script>
+  // --- Mapas de descripciones (mismos que en Python)
+  const mapGan = {
+    'NI':'No Inscripto','AC':'Activo','EX':'Exento','NC':'No corresponde',
+    'NA':'No alcanzado','XN':'Exento no alcanzado','AN':'Activo no alcanzado'
+  };
+  const mapIva = {
+    'NI':'No Inscripto','AC':'Activo','EX':'Exento',
+    'NA':'No alcanzado','XN':'Exento no alcanzado','AN':'Activo no alcanzado'
+  };
+  const mapMono = {
+    'BT':'Trabajador promovido','AP':'Actividad primaria','AC':'Asociado a cooperativa',
+    'AL':'Monotributo social locación','AV':'Monotributo social ventas',
+    'AT':'Trabajador promovido','NI':'No inscripto'
+  };
+  const mapSoc = {'N':'No activo','S':'Activo'};
+  const mapEmp = {'N':'No empleador','S':'Empleador activo'};
+  const mapAct = {
+    '00':'No es monotributista','01':'Comercial','02':'Profesional','03':'Servicios/Oficio',
+    '04':'Industrial','05':'Agropecuaria','06':'Otros','07':'Eventual',
+    '08':'Prest. de Servicio o Locación','09':'Otras actividades','10':'Ventas','11':'Agricultura Familia'
+  };
+
+  // --- Helpers
+  const $ = id => document.getElementById(id);
+  function setStatus(txt){ $('status').textContent = txt; }
+  function setWarning(txt){ $('warning').textContent = txt; }
+  function cleanCuit(v){
+    if(v === undefined || v === null) return '';
+    let s = String(v).replace(/[\.\-]/g,'').trim();
+    if(s === '') return '';
+    // if numeric-like, pad left
+    s = s.padStart(11,'0');
+    return s;
+  }
+
+  async function readExcelCuits(file){
+    // use SheetJS to read the file and extract column CUIT
+    const data = await file.arrayBuffer();
+    const wb = XLSX.read(data, {type:'array'});
+    const firstSheetName = wb.SheetNames[0];
+    const ws = wb.Sheets[firstSheetName];
+    const json = XLSX.utils.sheet_to_json(ws, {defval:''});
+    // Expect column named CUIT (case-sensitive). Try some variations.
+    let cuits = [];
+    for(const r of json){
+      // try different keys
+      let val = undefined;
+      if('CUIT' in r) val = r['CUIT'];
+      else if('cuit' in r) val = r['cuit'];
+      else {
+        // try to find a column whose header contains 'cuit' ignoring case
+        for(const k of Object.keys(r)){
+          if(k && k.toString().toLowerCase().includes('cuit')){ val = r[k]; break; }
+        }
+      }
+      if(val !== undefined && String(val).trim() !== ''){
+        cuits.push(cleanCuit(val));
+      }
+    }
+    // remove empty and duplicates
+    cuits = cuits.filter(x => x && x.length>0);
+    const unique = Array.from(new Set(cuits));
+    return { list: unique, rows: json };
+  }
+
+  async function readTxtLinesIso(file){
+    // Read as arrayBuffer and decode with ISO-8859-1
+    const ab = await file.arrayBuffer();
+    const decoder = new TextDecoder('iso-8859-1');
+    const txt = decoder.decode(ab);
+    // split by CRLF or LF
+    const lines = txt.split(/\r?\n/);
+    return lines;
+  }
+
+  function procesarLinea(linea){
+    // same positions as el script: indices 0:11, 11:41, 41:43, 43:45, 45:47, 47, 48, 50:52
+    // ensure linea length is adequate by padding with spaces if needed
+    if(linea.length < 52) linea = linea.padEnd(52, ' ');
+    const registro = {
+      'CUIT': linea.substring(0,11).trim(),
+      'DENOMINACION': linea.substring(11,41).trim(),
+      'IMP GANANCIAS': linea.substring(41,43).trim(),
+      'IMP IVA': linea.substring(43,45).trim(),
+      'MONOTRIBUTO': linea.substring(45,47).trim(),
+      'INTEGRANTE SOC': linea.substring(47,48).trim(),
+      'EMPLEADOR': linea.substring(48,49).trim(),
+      'ACTIVIDAD': linea.substring(50,52).trim()
+    };
+    return registro;
+  }
+
+  function addDescriptions(reg){
+    return {
+      ...reg,
+      'GANANCIAS_DESC': mapGan[reg['IMP GANANCIAS']] || '',
+      'IVA_DESC': mapIva[reg['IMP IVA']] || '',
+      'MONOTRIBUTO_DESC': mapMono[reg['MONOTRIBUTO']] || '',
+      'INTEGRANTE_DESC': mapSoc[reg['INTEGRANTE SOC']] || '',
+      'EMPLEADOR_DESC': mapEmp[reg['EMPLEADOR']] || '',
+      'ACTIVIDAD_DESC': mapAct[reg['ACTIVIDAD']] || ''
+    };
+  }
+
+  // --- Event handlers
+  $('runBtn').addEventListener('click', async () => {
+    setWarning('');
+    setStatus('');
+    $('previewArea').style.display = 'none';
+    const excelInput = $('excelFile').files[0];
+    const txtInput = $('txtFile').files[0];
+
+    if(!excelInput || !txtInput){
+      setWarning('Por favor subí ambos archivos: Excel y TXT.');
+      return;
+    }
+
+    try{
+      $('runBtn').disabled = true;
+      $('previewBtn').disabled = true;
+      setStatus('Leyendo Excel (extrayendo CUITs)...');
+
+      const { list: cuitsList, rows: excelRows } = await readExcelCuits(excelInput);
+      if(cuitsList.length === 0){
+        setWarning('No se encontraron CUITs válidos en el Excel. Revisá la columna "CUIT".');
+        $('runBtn').disabled = false;
+        $('previewBtn').disabled = false;
+        return;
+      }
+
+      setStatus(`CUITs encontrados en Excel: ${cuitsList.length}. Leyendo padrón (TXT)...`);
+      // read lines
+      const lines = await readTxtLinesIso(txtInput);
+
+      // warning if very large
+      if(txtInput.size > 150 * 1024 * 1024){
+        setWarning('Aviso: el archivo TXT es muy grande (>150MB). El proceso puede tardar o consumir mucha memoria.');
+      }
+
+      // process each line and match CUITs
+      const cuitsSet = new Set(cuitsList);
+      const encontrados = [];
+      const encontradosSet = new Set();
+
+      setStatus('Procesando líneas del padrón y buscando coincidencias...');
+      for(let i=0;i<lines.length;i++){
+        const ln = lines[i];
+        if(!ln || ln.trim()==='') continue;
+        const reg = procesarLinea(ln);
+        // normalize reg.CUIT
+        const c = reg['CUIT'].replace(/[\.\-]/g,'').padStart(11,'0');
+        if(cuitsSet.has(c)){
+          const enriched = addDescriptions({
+            'CUIT': c,
+            'DENOMINACION': reg['DENOMINACION'],
+            'IMP GANANCIAS': reg['IMP GANANCIAS'],
+            'IMP IVA': reg['IMP IVA'],
+            'MONOTRIBUTO': reg['MONOTRIBUTO'],
+            'INTEGRANTE SOC': reg['INTEGRANTE SOC'],
+            'EMPLEADOR': reg['EMPLEADOR'],
+            'ACTIVIDAD': reg['ACTIVIDAD']
+          });
+          encontrados.push(enriched);
+          encontradosSet.add(c);
+        }
+      }
+
+      // prepare no encontrados (from original excel rows)
+      // build df_no_encontrados as array of objects with CUIT and optionally original row data
+      const noEncontrados = [];
+      for(const r of excelRows){
+        // try to find CUIT in row
+        let raw = undefined;
+        if('CUIT' in r) raw = r['CUIT'];
+        else {
+          for(const k of Object.keys(r)){
+            if(k && k.toString().toLowerCase().includes('cuit')){ raw = r[k]; break; }
+          }
+        }
+        const c = raw === undefined ? '' : cleanCuit(raw);
+        if(c && !encontradosSet.has(c)){
+          noEncontrados.push({'CUIT': c});
+        }
+      }
+
+      // Build summary
+      const totalCuits = cuitsList.length;
+      const totalEncontrados = encontrados.length;
+      const totalNoEncontrados = noEncontrados.length;
+      const porcentaje = totalCuits > 0 ? Math.round((totalEncontrados/totalCuits)*100*100)/100 : 0;
+
+      setStatus('Generando Excel con 3 hojas...');
+      // create workbook
+      const wb = XLSX.utils.book_new();
+
+      // Encontrados sheet (order columns as requested)
+      const encontradosSheetData = encontrados.map(r => ({
+        'CUIT': r['CUIT'],
+        'DENOMINACION': r['DENOMINACION'],
+        'IMP GANANCIAS': r['IMP GANANCIAS'],
+        'IMP IVA': r['IMP IVA'],
+        'MONOTRIBUTO': r['MONOTRIBUTO'],
+        'INTEGRANTE SOC': r['INTEGRANTE SOC'],
+        'EMPLEADOR': r['EMPLEADOR'],
+        'ACTIVIDAD': r['ACTIVIDAD'],
+        'GANANCIAS_DESC': r['GANANCIAS_DESC'],
+        'IVA_DESC': r['IVA_DESC'],
+        'MONOTRIBUTO_DESC': r['MONOTRIBUTO_DESC'],
+        'INTEGRANTE_DESC': r['INTEGRANTE_DESC'],
+        'EMPLEADOR_DESC': r['EMPLEADOR_DESC'],
+        'ACTIVIDAD_DESC': r['ACTIVIDAD_DESC']
+      }));
+      const wsEncontrados = XLSX.utils.json_to_sheet(encontradosSheetData);
+      XLSX.utils.book_append_sheet(wb, wsEncontrados, 'Encontrados');
+
+      // No Encontrados sheet
+      const wsNo = XLSX.utils.json_to_sheet(noEncontrados);
+      XLSX.utils.book_append_sheet(wb, wsNo, 'No Encontrados');
+
+      // Resumen sheet
+      const resumen = [
+        { 'Métrica': 'Total CUITs Excel', 'Valor': totalCuits },
+        { 'Métrica': 'Coincidencias encontradas', 'Valor': totalEncontrados },
+        { 'Métrica': 'No encontradas', 'Valor': totalNoEncontrados },
+        { 'Métrica': 'Porcentaje de coincidencia (%)', 'Valor': porcentaje }
+      ];
+      const wsRes = XLSX.utils.json_to_sheet(resumen);
+      XLSX.utils.book_append_sheet(wb, wsRes, 'Resumen');
+
+      // write file (download)
+      const outName = 'Reporte_AFIP_Padron_HTML.xlsx';
+      XLSX.writeFile(wb, outName);
+
+      setStatus(`Listo. Archivo generado: ${outName} — Encontrados: ${totalEncontrados}, No encontrados: ${totalNoEncontrados}`);
+      // Show preview data if any
+      showPreview(encontrados.slice(0,10));
+
+    } catch(err){
+      console.error(err);
+      setWarning('Ocurrió un error: ' + (err && err.message ? err.message : String(err)));
+      setStatus('');
+    } finally {
+      $('runBtn').disabled = false;
+      $('previewBtn').disabled = false;
+    }
+  });
+
+  $('previewBtn').addEventListener('click', async () => {
+    setWarning('');
+    setStatus('');
+    const excelInput = $('excelFile').files[0];
+    const txtInput = $('txtFile').files[0];
+    if(!excelInput || !txtInput){
+      setWarning('Por favor subí ambos archivos antes de previsualizar.');
+      return;
+    }
+    // run a lightweight preview: parse small part of txt (first 2000 lines)
+    $('previewBtn').disabled = true;
+    $('runBtn').disabled = true;
+    try{
+      setStatus('Generando vista previa...');
+      const { list: cuitsList, rows: excelRows } = await readExcelCuits(excelInput);
+      const lines = await readTxtLinesIso(txtInput);
+      const limit = Math.min(lines.length, 2000);
+      const cuitsSet = new Set(cuitsList);
+      const encontrados = [];
+      for(let i=0;i<limit;i++){
+        const ln = lines[i];
+        if(!ln || ln.trim()==='') continue;
+        const reg = procesarLinea(ln);
+        const c = reg['CUIT'].replace(/[\.\-]/g,'').padStart(11,'0');
+        if(cuitsSet.has(c)){
+          encontrados.push(addDescriptions({
+            'CUIT': c,
+            'DENOMINACION': reg['DENOMINACION'],
+            'IMP GANANCIAS': reg['IMP GANANCIAS'],
+            'IMP IVA': reg['IMP IVA'],
+            'MONOTRIBUTO': reg['MONOTRIBUTO'],
+            'INTEGRANTE SOC': reg['INTEGRANTE SOC'],
+            'EMPLEADOR': reg['EMPLEADOR'],
+            'ACTIVIDAD': reg['ACTIVIDAD']
+          }));
+          if(encontrados.length >= 10) break;
+        }
+      }
+      showPreview(encontrados);
+      setStatus('Vista previa generada (hasta 10 registros).');
+    } catch(err){
+      console.error(err);
+      setWarning('Error en la vista previa: ' + err.message);
+    } finally {
+      $('previewBtn').disabled = false;
+      $('runBtn').disabled = false;
+    }
+  });
+
+  function showPreview(rows){
+    if(!rows || rows.length===0){
+      $('previewArea').style.display = 'block';
+      $('previewTable').innerHTML = '<div class="small">No se encontraron coincidencias en la vista previa.</div>';
+      return;
+    }
+    $('previewArea').style.display = 'block';
+    let html = '<table><thead><tr>';
+    const cols = ['CUIT','DENOMINACION','IMP GANANCIAS','GANANCIAS_DESC','IMP IVA','IVA_DESC','MONOTRIBUTO','MONOTRIBUTO_DESC','INTEGRANTE SOC','INTEGRANTE_DESC','EMPLEADOR','EMPLEADOR_DESC','ACTIVIDAD','ACTIVIDAD_DESC'];
+    for(const c of cols) html += `<th>${c}</th>`;
+    html += '</tr></thead><tbody>';
+    for(const r of rows){
+      html += '<tr>';
+      for(const c of cols) html += `<td>${(r[c]!==undefined ? r[c] : '')}</td>`;
+      html += '</tr>';
+    }
+    html += '</tbody></table>';
+    $('previewTable').innerHTML = html;
+  }
+
+  </script>
+</body>
+</html>
