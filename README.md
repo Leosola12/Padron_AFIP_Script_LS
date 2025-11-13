@@ -17,7 +17,7 @@ Este repositorio contiene scripts en Python y Google Colab para consultar el pad
 
 - `padron_afip_ls.py`: versión para ejecutar localmente (requiere Python 3.x, pandas, tkinter).
 - `padron_afip_colab.ipynb`: versión para ejecutar directamente en Google Colab, sin instalación local.
-- `Padron_arca_check.HTML`: versión para ejecutar directamente en navegador web, sin instalación de ningún tipo. Tiene algunas variaciones en el reporte, pero nada del otro mundo.
+- `Padron_afip_check.HTML`: versión para ejecutar directamente en navegador web, sin instalación de ningún tipo. Tiene algunas variaciones en el reporte, pero nada del otro mundo.
 
 ## Requisitos
 
