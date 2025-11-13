@@ -11,18 +11,18 @@ Este repositorio contiene scripts en Python y Google Colab para consultar el pad
 - **Salida en Excel**:
   - Hoja “Resumen” con estadísticas globales.
   - Hoja “Encontrados” con coincidencias completas (CUIT, denominación, impuestos, actividad, etc.).
-  - Hoja “No Encontrados” con los CUITs no localizados.
+  - Hoja “No Encontrados” con los CUITs no localizados. (Las versiones python copian el formato de tu listado de cuits, la versión HTML sólo reporta los cuits no encontrados)
 
 ## Versiones disponibles
 
 - `padron_afip_ls.py`: versión para ejecutar localmente (requiere Python 3.x, pandas, tkinter).
 - `padron_afip_colab.ipynb`: versión para ejecutar directamente en Google Colab, sin instalación local.
+- `Padron_arca_check.HTML`: versión para ejecutar directamente en navegador web, sin instalación de ningún tipo. Tiene algunas variaciones en el reporte, pero nada del otro mundo.
 
 ## Requisitos
 
 - Python 3.x  
-- Librerías: `pandas`, `tkinter` (viene incluida con Python)
-- En Colab: no requiere instalación adicional.
+- Librerías: `pandas`, `tkinter` 
 
 ## Uso
 
